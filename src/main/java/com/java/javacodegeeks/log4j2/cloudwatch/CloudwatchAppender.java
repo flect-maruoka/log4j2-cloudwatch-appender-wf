@@ -3,7 +3,15 @@ package com.java.javacodegeeks.log4j2.cloudwatch;
 import static java.util.Comparator.comparing;
 import static java.util.stream.Collectors.toList;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Formatter;
 import java.util.List;
@@ -39,6 +47,8 @@ import com.amazonaws.services.logs.model.InvalidParameterException;
 import com.amazonaws.services.logs.model.InvalidSequenceTokenException;
 import com.amazonaws.services.logs.model.PutLogEventsRequest;
 import com.amazonaws.services.logs.model.PutLogEventsResult;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.client.builder.AwsClientBuilder;
  
 @Plugin(name = "CLOUDW", category = "Core", elementType = "appender", printObject = true)
@@ -48,10 +58,18 @@ public class CloudwatchAppender extends AbstractAppender {
 	  * 
 	  */
 	 private static final long serialVersionUID = 12321345L;
-	  
+	 
+	 private static final String BR = System.getProperty("line.separator");
+	 
+	 private static final String FS = System.getProperty("file.separator");
+
+	 private static final String BUCKET_NAME = "cloudwatch-appender-webft";
+	 
 	 private static Logger logger2 = LogManager.getLogger(CloudwatchAppender.class);
 	 
 	 private final Boolean DEBUG_MODE = System.getProperty("log4j.debug") != null;
+	 
+	 private final String ENV = System.getProperty("env");
 	 
 	    /**
 	     * Used to make sure that on close() our daemon thread isn't also trying to sendMessage()s
@@ -68,6 +86,11 @@ public class CloudwatchAppender extends AbstractAppender {
 	     */
 	    private AWSLogs awsLogsClient;
 	 
+	    /**
+	     * the Amazon S3 API client
+	     */
+	    private AmazonS3 amazonS3Client;
+
 	    private AtomicReference lastSequenceToken = new AtomicReference<>();
 	 
 	    /**
@@ -129,12 +152,9 @@ public class CloudwatchAppender extends AbstractAppender {
 	    @Override
 	    public void append(LogEvent event) {
 	      if (cloudwatchAppenderInitialised.get()) {
-	             boolean result = loggingEventsQueue.offer(event.toImmutable());
-	             if (!result) {
-	            	 String errorMessage = event.getMessage().getFormattedMessage();
-	            	 if(errorMessage.indexOf("Could not enqueue message:") == -1) {
-		            	 logger2.error("Could not enqueue message: " +  errorMessage);	            		 
-	            	 }
+	             boolean offerResult = loggingEventsQueue.offer(event.toImmutable());
+	             if (!offerResult) {
+	            	 putErrorLogToS3("Could not enqueue message: " +  event.getMessage().getFormattedMessage());
 	             }
 	         } else {
 	             // just do nothing
@@ -241,13 +261,13 @@ public class CloudwatchAppender extends AbstractAppender {
 	                            invalidSequenceTokenException.printStackTrace();
 	                        }
 	                    } catch (InvalidParameterException invalidParameterException) {
-	                        logger2.error("error inserting cloudwatch:",invalidParameterException);
+	                    	putErrorLogToS3("error inserting cloudwatch: " + invalidParameterException + BR + "missing messages: " + logEventListToString(inputLogEvents));
 	                    } catch (AWSLogsException awsLogsException) {
-	                        logger2.error("error inserting cloudwatch:",awsLogsException);
+	                    	putErrorLogToS3("error inserting cloudwatch: " + awsLogsException + BR + "missing messages: " + logEventListToString(inputLogEvents));
 	                    }
 	                }
 	            } catch (Exception e) {
-	            	logger2.error("error inserting cloudwatch:",e);
+	            	putErrorLogToS3("error inserting cloudwatch: " + e);
 	                if (DEBUG_MODE) {
 	                    e.printStackTrace();
 	                }
@@ -342,5 +362,138 @@ public class CloudwatchAppender extends AbstractAppender {
 	                                                  )
 	    {
 	     return new CloudwatchAppender(name, layout, null, ignoreExceptions, logGroupName, logStreamName , awsAccessKey, awsSecretKey, awsRegion, queueLength,messagesBatchSize,endpoint, sleepTime);
+	    }
+	    
+	    private String logEventListToString(List inputLogEvents) {
+	    	
+	    	StringBuilder missingMessage = new StringBuilder();
+	    	
+	    	for (Object inputLogEvent : inputLogEvents) {
+	    		missingMessage.append(inputLogEvent);
+	    		missingMessage.append(BR);
+	    	}
+	    	
+	    	return missingMessage.toString();
+	    	
+	    }
+	    
+	    private void putErrorLogToS3(String errorMessage) {
+	    	
+	    	LocalDateTime now = LocalDateTime.now();
+	    	
+	    	Path createTempFilePath = createTempFile(now);
+	    	
+	    	writeTempFile(createTempFilePath, errorMessage);
+	    	
+	    	uploadFileToS3(now, createTempFilePath);
+	    	
+    		deleteTempFile(createTempFilePath);
+	    }
+	    
+	    private Path createTempFile(LocalDateTime now) {
+	    	DateTimeFormatter dtformat = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
+	    	String fNowDateTime = dtformat.format(now);
+	    	String fileName = logGroupName + "_" + logStreamName + "_" + "CloudwatchAppender" + "_" + fNowDateTime + "_";
+	    		    	
+	    	Path createTempFilePath = null;
+	    		    	
+	    	try {
+	    		createTempFilePath = Files.createTempFile(fileName, ".log");
+	    	} catch (Exception e) {
+	    		logger2.error("Could not create file: ", e);
+	    		if (DEBUG_MODE) {
+                    e.printStackTrace();
+                }
+	    	}
+	    	
+	    	return createTempFilePath;
+	    }
+	    
+	    private void writeTempFile(Path createTempFilePath, String errorMessage) {
+	    	File file = createTempFilePath.toFile();
+	    	
+	    	try {
+		    	if (checkBeforeWritefile(file)){
+		            FileWriter filewriter = new FileWriter(file);
+		            
+		            filewriter.write(errorMessage + BR);
+
+		            filewriter.close();
+		    	} else {
+		    		logger2.error("Could not write file: " + createTempFilePath);		        	  
+		    	}
+		    } catch (Exception e){
+		    	logger2.error("Could not write file: ", e);
+		    	if (DEBUG_MODE) {
+                    e.printStackTrace();
+                }
+	    	}
+	    }
+	    
+	    private boolean checkBeforeWritefile(File file){
+	        if (file.exists()){
+	          if (file.isFile() && file.canWrite()){
+	            return true;
+	          }
+	        }
+	        return false;
+	    }
+	    
+	    private void uploadFileToS3(LocalDateTime now, Path uploadTempFilePath) {
+	    	
+	    	StringBuilder keyName = new StringBuilder();
+	    	keyName.append("appender");
+	    	keyName.append("/");
+	    	keyName.append(logGroupName);
+	    	keyName.append("/");
+	    	keyName.append(logStreamName);
+	    	keyName.append("/");
+	    	keyName.append(String.valueOf(now.getYear()));
+	    	keyName.append("/");
+	    	keyName.append(String.valueOf(now.getMonthValue()));
+	    	keyName.append("/");
+	    	keyName.append(String.valueOf(now.getDayOfMonth()));
+	    	keyName.append("/");
+	    	keyName.append(uploadTempFilePath.getFileName().toString());
+	    	
+	    	String bucketName = BUCKET_NAME;
+	    	if (ENV != null) {
+		    	if (ENV.indexOf("prd") != -1) {
+		    		bucketName = "prd-" + BUCKET_NAME;
+		    	} else if (ENV.indexOf("stg") != -1) {
+		    		bucketName = "stg-" + BUCKET_NAME;
+		    	} else if (ENV.indexOf("dev") != -1) {
+		    		bucketName = "dev-" + BUCKET_NAME;
+		    	}
+	    	}
+	    	
+	    	AmazonS3ClientBuilder clientBuilder = AmazonS3ClientBuilder.standard();
+            clientBuilder.setCredentials(new AWSStaticCredentialsProvider(new BasicAWSCredentials(this.awsAccessKey, this.awsAccessSecret)));
+            if (this.endpoint != null) {
+                 clientBuilder.withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(this.endpoint, this.awsRegion));
+            } else {
+                 clientBuilder.withRegion(Regions.fromName(awsRegion));
+            }
+            this.amazonS3Client = clientBuilder.build();
+            
+            try {
+            	amazonS3Client.putObject(bucketName, keyName.toString(), uploadTempFilePath.toFile());
+            } catch (Exception e) {
+            	logger2.error("Could not upload file: ", e);
+            	if (DEBUG_MODE) {
+                    e.printStackTrace();
+                }
+            }
+	    }
+	    
+	    private void deleteTempFile(Path deleteTempFilePath) {
+	    	try {
+	    		Files.deleteIfExists(deleteTempFilePath);
+	    	} catch (Exception e) {
+	    		logger2.error("Could not delete file: ", e);
+	    		if (DEBUG_MODE) {
+                    e.printStackTrace();
+                }
+	    	}
 	    }
 	}
