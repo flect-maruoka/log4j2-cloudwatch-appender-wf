@@ -4,7 +4,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.java.javacodegeeks.log4j2.cloudwatch</groupId>
 	<artifactId>log4j2-cloudwatch-appender-wf</artifactId>
-	<version>1.1.1</version>
+	<version>1.1.3</version>
 	<properties>
 		<maven.compiler.source>1.8</maven.compiler.source>
 		<maven.compiler.target>1.8</maven.compiler.target>

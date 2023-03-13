@@ -48,10 +48,18 @@ public class CloudwatchAppender extends AbstractAppender {
 	  * 
 	  */
 	 private static final long serialVersionUID = 12321345L;
-	  
+	 
 	 private static Logger logger2 = LogManager.getLogger(CloudwatchAppender.class);
 	 
 	 private final Boolean DEBUG_MODE = System.getProperty("log4j.debug") != null;
+	 
+	 private long QUEUE_OFFER_SUCCESS_COUNT = 0;
+	 
+	 private long QUEUE_OFFER_FAILURE_COUNT = 0;
+	 
+	 private long CWL_PUT_COUNT = 0;
+	 
+	 private long MAX_COUNT = 2100000000;
 	 
 	    /**
 	     * Used to make sure that on close() our daemon thread isn't also trying to sendMessage()s
@@ -128,14 +136,28 @@ public class CloudwatchAppender extends AbstractAppender {
 	 
 	    @Override
 	    public void append(LogEvent event) {
-	      if (cloudwatchAppenderInitialised.get()) {
-	             boolean result = loggingEventsQueue.offer(event.toImmutable());
-	             if (!result) {
-	            	 String errorMessage = event.getMessage().getFormattedMessage();
-	            	 if(errorMessage.indexOf("Could not enqueue message:") == -1) {
-		            	 logger2.error("Could not enqueue message: " +  errorMessage);	            		 
-	            	 }
-	             }
+	    	if (cloudwatchAppenderInitialised.get()) {
+	    		String errorMessage = event.getMessage().getFormattedMessage();
+	    		boolean offerResult;
+	    		if(errorMessage.indexOf("Could not enqueue message:") == -1 && errorMessage.indexOf("appender-debug-log") == -1) {
+	    			
+	    			offerResult = loggingEventsQueue.offer(event.toImmutable());
+	    			
+	    			if (!offerResult) {
+		            	 if (QUEUE_OFFER_FAILURE_COUNT > MAX_COUNT) {
+		            		 QUEUE_OFFER_FAILURE_COUNT = 0;
+		            	 }
+		            	 QUEUE_OFFER_FAILURE_COUNT++;
+		            	 logger2.error("Could not enqueue message: " +  errorMessage);
+
+		             } else {
+		            	 if (QUEUE_OFFER_SUCCESS_COUNT > MAX_COUNT) {
+		            		 QUEUE_OFFER_SUCCESS_COUNT = 0;
+		            	 }
+		            	 QUEUE_OFFER_SUCCESS_COUNT++;
+		             }
+		             logger2.info("appender-debug-log: QUEUE_OFFER_SUCCESS_COUNT = " + String.valueOf(QUEUE_OFFER_SUCCESS_COUNT) + ", QUEUE_OFFER_FAILURE_COUNT = " + String.valueOf(QUEUE_OFFER_FAILURE_COUNT) + ", loggingEventsQueue.size() = " + String.valueOf(loggingEventsQueue.size()));
+	    		}
 	         } else {
 	             // just do nothing
 	         }
@@ -222,7 +244,14 @@ public class CloudwatchAppender extends AbstractAppender {
 	                            inputLogEvents);
 	 
 	                    try {
-	                        putLogEventsRequest.setSequenceToken((String)lastSequenceToken.get());
+	                    	if (CWL_PUT_COUNT > MAX_COUNT) {
+	                    		CWL_PUT_COUNT = 0;
+	   	            	 	}
+	                    	CWL_PUT_COUNT = CWL_PUT_COUNT + inputLogEvents.size();
+	                    	//logger2.info("appender-debug-log: logGroupName: " + this.logGroupName + ", logStreamName: " + this.logStreamName + ", queueLength: " + this.queueLength + ", messagesBatchSize: " + this.messagesBatchSize + ", sleepTime: " + this.sleepTime);
+	                    	logger2.info("appender-debug-log: CWL_PUT_COUNT = " + String.valueOf(CWL_PUT_COUNT) + ", inputLogEvents.size() = " + String.valueOf(inputLogEvents.size()) + ", loggingEventsQueue.size() = " + String.valueOf(loggingEventsQueue.size()));
+	                    	
+	                    	putLogEventsRequest.setSequenceToken((String)lastSequenceToken.get());
 	                        PutLogEventsResult result = awsLogsClient.putLogEvents(putLogEventsRequest);
 	                        lastSequenceToken.set(result.getNextSequenceToken());
 	                    } catch (DataAlreadyAcceptedException dataAlreadyAcceptedExcepted) {
