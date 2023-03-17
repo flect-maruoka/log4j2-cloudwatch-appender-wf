@@ -63,7 +63,7 @@ public class CloudwatchAppender extends AbstractAppender {
 	 
 	 private static final String FS = System.getProperty("file.separator");
 
-	 private static final String BUCKET_NAME = "cloudwatch-appender-webft";
+	 private static final String BUCKET_NAME = "cloudhub-app-webft-drop";
 	 
 	 private static Logger logger2 = LogManager.getLogger(CloudwatchAppender.class);
 	 
@@ -393,7 +393,7 @@ public class CloudwatchAppender extends AbstractAppender {
 	    private Path createTempFile(LocalDateTime now) {
 	    	DateTimeFormatter dtformat = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
 	    	String fNowDateTime = dtformat.format(now);
-	    	String fileName = logGroupName + "_" + logStreamName + "_" + "CloudwatchAppender" + "_" + fNowDateTime + "_";
+	    	String fileName = "cloudwatch-drop" + "_";
 	    		    	
 	    	Path createTempFilePath = null;
 	    		    	
@@ -442,7 +442,7 @@ public class CloudwatchAppender extends AbstractAppender {
 	    private void uploadFileToS3(LocalDateTime now, Path uploadTempFilePath) {
 	    	
 	    	StringBuilder keyName = new StringBuilder();
-	    	keyName.append("appender");
+	    	keyName.append("application");
 	    	keyName.append("/");
 	    	keyName.append(logGroupName);
 	    	keyName.append("/");
