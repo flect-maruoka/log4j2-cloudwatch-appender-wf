@@ -26,8 +26,8 @@ Use this dependency in your Java/Mule Applications
 ```
 <dependency>
 	<groupId>com.java.javacodegeeks.log4j2.cloudwatch</groupId>
-	<artifactId>log4j2-cloudwatch-appender-wf</artifactId>
-	<version>1.1.3</version>
+	<artifactId>log4j2-cloudwatch-appender-wf-debug</artifactId>
+	<version>1.1.1</version>
 	<type>jar</type>
 </dependency>
 ```
