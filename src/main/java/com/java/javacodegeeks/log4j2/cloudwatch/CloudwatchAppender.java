@@ -70,7 +70,8 @@ public class CloudwatchAppender extends AbstractAppender {
 	 private final Boolean DEBUG_MODE = System.getProperty("log4j.debug") != null;
 	 
 	 private final String ENV = System.getProperty("env");
-	 
+
+	 private final String S3_ENDPOINT = System.getProperty("s3endpoint");
 	    /**
 	     * Used to make sure that on close() our daemon thread isn't also trying to sendMessage()s
 	     */
@@ -153,8 +154,13 @@ public class CloudwatchAppender extends AbstractAppender {
 	    public void append(LogEvent event) {
 	      if (cloudwatchAppenderInitialised.get()) {
 	             boolean offerResult = loggingEventsQueue.offer(event.toImmutable());
-	             if (!offerResult) {
-	            	 putErrorLogToS3("Could not enqueue message: " +  event.getMessage().getFormattedMessage());
+	             String logMessage = event.getMessage().getFormattedMessage();
+	             if (!offerResult &&
+	            		 logMessage.indexOf("Could not create file:") == -1 &&
+	            		 logMessage.indexOf("Could not write file:") == -1 &&
+	            		 logMessage.indexOf("Could not upload file:") == -1 &&
+	            		 logMessage.indexOf("Could not delete file:") == -1) {
+	            	 putErrorLogToS3("Could not enqueue message: " +  logMessage);
 	             }
 	         } else {
 	             // just do nothing
@@ -469,8 +475,10 @@ public class CloudwatchAppender extends AbstractAppender {
 	    	
 	    	AmazonS3ClientBuilder clientBuilder = AmazonS3ClientBuilder.standard();
             clientBuilder.setCredentials(new AWSStaticCredentialsProvider(new BasicAWSCredentials(this.awsAccessKey, this.awsAccessSecret)));
-            if (this.endpoint != null) {
-                 clientBuilder.withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(this.endpoint, this.awsRegion));
+            if (S3_ENDPOINT != null) {
+                 clientBuilder.withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(
+                		 "https://bucket." + S3_ENDPOINT,
+                		 this.awsRegion));
             } else {
                  clientBuilder.withRegion(Regions.fromName(awsRegion));
             }
